@@ -103,47 +103,48 @@ async function addExtraInfoToPage(eventID) {
  * @param {object} options - The bounding box where to look for stations.
  */
 async function addStationRow(options) {
-  console.log('Fetching stations.');
-  console.time('station query');
-  const bindingsStream = await getClosestTrainStations(options.bbox);
-  console.timeLog('station query', 'setup');
+  try {
+    console.log('Fetching stations.');
+    const bindingsStream = await getClosestTrainStations(options.bbox);
 
-  let alreadyOneStation = false;
+    let alreadyOneStation = false;
 
-  bindingsStream.on('data', (binding) => {
-    console.timeLog('station query', 'data');
-    if (!alreadyOneStation) {
-      const infoDiv = document.querySelector('.app-event-details__content__header__info');
-      //console.log(infoDiv);
-      const newDiv = document.createElement('div');
-      newDiv.classList.add('app-event-details__content__header__info__ages');
-      newDiv.classList.add('app-event-details__list-item-with-icon');
-      newDiv.innerHTML = '<div class="icons app-icon app-icon-redesign-age">🚂</div><div data-v-f777bbd1 id="stations"></div>';
-      infoDiv?.appendChild(newDiv);
-    }
-
-    const stationsDiv = document.querySelector('#stations');
-
-    if (stationsDiv) {
-      if (alreadyOneStation) {
-        stationsDiv.innerHTML += ', ';
+    bindingsStream.on('data', (binding) => {
+      if (!alreadyOneStation) {
+        const infoDiv = document.querySelector('.app-event-details__content__header__info');
+        //console.log(infoDiv);
+        const newDiv = document.createElement('div');
+        newDiv.classList.add('app-event-details__content__header__info__ages');
+        newDiv.classList.add('app-event-details__list-item-with-icon');
+        newDiv.innerHTML = '<div class="icons app-icon app-icon-redesign-age">🚂</div><div data-v-f777bbd1 id="stations"></div>';
+        infoDiv?.appendChild(newDiv);
       }
 
-      const distance = turf.distance(
-        turf.point([options.long, options.lat]),
-        turf.point([parseFloat(binding.get('long').value), parseFloat(binding.get('lat').value)]),
-        'kilometers'
-      );
+      const stationsDiv = document.querySelector('#stations');
 
-      stationsDiv.innerHTML += `<a href="${binding.get('station').value}">${binding.get('name').value} (${Math.round((distance + Number.EPSILON) * 100) / 100} km)</a>`;
-      alreadyOneStation = true;
-    }
-  });
+      if (stationsDiv) {
+        if (alreadyOneStation) {
+          stationsDiv.innerHTML += ', ';
+        }
 
-  bindingsStream.on('end', () => {
-    console.timeEnd('station query');
-    console.log('Received stations.');
-  });
+        const distance = turf.distance(
+          turf.point([options.long, options.lat]),
+          turf.point([parseFloat(binding.get('long').value), parseFloat(binding.get('lat').value)]),
+          'kilometers'
+        );
+
+        stationsDiv.innerHTML += `<a href="${binding.get('station').value}">${binding.get('name').value} (${Math.round((distance + Number.EPSILON) * 100) / 100} km)</a>`;
+        alreadyOneStation = true;
+      }
+    });
+
+    bindingsStream.on('end', () => {
+      console.log('Received stations.');
+    });
+  } catch (err) {
+    console.error('An issue was encountered when executing a SPARQL for NMBS stations');
+    console.error(err);
+  }
 }
 
 /**
@@ -361,17 +362,13 @@ WHERE {
  * @returns {Array} - The bindings of the results.
  */
 async function querySophox(options) {
-  const sophoxQuery = sophoxQueryTemplate(options);
-  //console.log(sophoxQuery);
+  const SOPHOX_URL = 'https://sophox.org/sparql?';
+  const sophoxQuery = new URLSearchParams({ query: sophoxQueryTemplate(options) });
+  const proxyUrl = CORS_PROXY + SOPHOX_URL + sophoxQuery.toString();
 
-  const sophoxUrl = 'https://sophox.org/sparql?' + new URLSearchParams({
-    query: sophoxQuery
-  });
-
-  const proxyUrl = CORS_PROXY + encodeURIComponent(sophoxUrl);
   const response = await fetch(proxyUrl, {
     'headers': {
-      'Accept': 'application/sparql-results+json',
+      'Accept': 'application/sparql-results+json,application/n-quads,application/trig;q=0.95,application/ld+json;q=0.9,application/n-triples;q=0.8,*/*;q=0.1',
     }
   });
 
