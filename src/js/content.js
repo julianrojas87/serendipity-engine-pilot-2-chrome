@@ -108,38 +108,51 @@ async function addStationRow(options) {
     const bindingsStream = await getClosestTrainStations(options.bbox);
 
     let alreadyOneStation = false;
+    const stations = [];
 
     bindingsStream.on('data', (binding) => {
-      if (!alreadyOneStation) {
-        const infoDiv = document.querySelector('.app-event-details__content__header__info');
-        //console.log(infoDiv);
-        const newDiv = document.createElement('div');
-        newDiv.classList.add('app-event-details__content__header__info__ages');
-        newDiv.classList.add('app-event-details__list-item-with-icon');
-        newDiv.innerHTML = '<div class="icons app-icon app-icon-redesign-age">🚂</div><div data-v-f777bbd1 id="stations"></div>';
-        infoDiv?.appendChild(newDiv);
-      }
+      const distance = turf.distance(
+        turf.point([options.long, options.lat]),
+        turf.point([parseFloat(binding.get('long').value), parseFloat(binding.get('lat').value)]),
+        'kilometers'
+      );
 
-      const stationsDiv = document.querySelector('#stations');
-
-      if (stationsDiv) {
-        if (alreadyOneStation) {
-          stationsDiv.innerHTML += ', ';
-        }
-
-        const distance = turf.distance(
-          turf.point([options.long, options.lat]),
-          turf.point([parseFloat(binding.get('long').value), parseFloat(binding.get('lat').value)]),
-          'kilometers'
-        );
-
-        stationsDiv.innerHTML += `<a href="${binding.get('station').value}">${binding.get('name').value} (${Math.round((distance + Number.EPSILON) * 100) / 100} km)</a>`;
-        alreadyOneStation = true;
-      }
+      stations.push({
+        station: binding.get('station').value,
+        name: binding.get('name').value,
+        distance
+      });
     });
 
     bindingsStream.on('end', () => {
       console.log('Received stations.');
+
+      stations.sort((a, b) => {
+        return parseFloat(a.distance) - parseFloat(b.distance);
+      });
+
+      for (const station of stations) {
+        if (!alreadyOneStation) {
+          const infoDiv = document.querySelector('.app-event-details__content__header__info');
+          //console.log(infoDiv);
+          const newDiv = document.createElement('div');
+          newDiv.classList.add('app-event-details__content__header__info__ages');
+          newDiv.classList.add('app-event-details__list-item-with-icon');
+          newDiv.innerHTML = '<div class="icons app-icon app-icon-redesign-age">🚂</div><div data-v-f777bbd1 id="stations"></div>';
+          infoDiv?.appendChild(newDiv);
+        }
+
+        const stationsDiv = document.querySelector('#stations');
+
+        if (stationsDiv) {
+          if (alreadyOneStation) {
+            stationsDiv.innerHTML += ', ';
+          }
+
+          stationsDiv.innerHTML += `<a href="${station.station}">${station.name} (${Math.round((station.distance + Number.EPSILON) * 100) / 100} km)</a>`;
+          alreadyOneStation = true;
+        }
+      }
     });
   } catch (err) {
     console.error('An issue was encountered when executing a SPARQL for NMBS stations');
@@ -159,12 +172,10 @@ async function addMuseumRow(options) {
     //   ...options.bbox
     // });
 
-    console.time('museum query');
     let museums = await querySophox({
       type: 'museum',
       ...options
     });
-    console.timeLog('museum query', 'data received');
 
     if (museums) {
       museums.sort((a, b) => {
@@ -176,7 +187,6 @@ async function addMuseumRow(options) {
 
       const museumsHTML = `<div class="icons app-icon app-icon-redesign-age">🏛️</div><div data-v-f777bbd1>${museums.join(', ')}</div>`;
       addRowToInfoHeader({ html: museumsHTML });
-      console.timeEnd('museum query');
     }
   } catch (err) {
     console.error('An issue was encountered when executing a SPARQL for museums');
@@ -362,25 +372,50 @@ WHERE {
  * @returns {Array} - The bindings of the results.
  */
 async function querySophox(options) {
-  const SOPHOX_URL = 'https://sophox.org/sparql?';
+  //const SOPHOX_URL = 'https://sophox.org/sparql?';
+  const SOPHOX_URL = 'https://era.ilabt.imec.be/virtuoso/sparql?';
   const sophoxQuery = new URLSearchParams({ query: sophoxQueryTemplate(options) });
-  const proxyUrl = CORS_PROXY + SOPHOX_URL + sophoxQuery.toString();
+  const proxyUrl = SOPHOX_URL + sophoxQuery.toString();
 
   const response = await fetch(proxyUrl, {
     'headers': {
-      'Accept': 'application/sparql-results+json,application/n-quads,application/trig;q=0.95,application/ld+json;q=0.9,application/n-triples;q=0.8,*/*;q=0.1',
+      'Accept': 'application/sparql-results+json',
     }
   });
 
   if (response.ok) {
     const result = await response.json();
-    console.log('Sophox result: ', result);
     return result.results.bindings;
   }
 }
 
 const sophoxQueryTemplate = ({ type, long, lat, maxDistance }) => {
+  // Query using Virtuoso geospatial functions
   return `
+PREFIX osmt: <https://wiki.openstreetmap.org/wiki/Key:>
+PREFIX osmm: <https://www.openstreetmap.org/meta/>
+PREFIX bif: <http://www.openlinksw.com/schemas/bif#>
+
+SELECT ?osmid ?name ?website ?distance 
+FROM <https://openstreetmap.org/graph>
+WHERE {
+  ?osmid osmt:tourism "${type}" ;
+         osmt:name ?name ;
+         osmm:loc ?geom .
+  
+  OPTIONAL {
+     ?osmid osmt:website ?website .
+  }
+  
+  BIND(bif:st_distance(bif:st_geomfromtext(bif:st_astext(?geom)), bif:st_geomfromtext("POINT(${long} ${lat})")) AS ?distance)
+  FILTER(?distance < ${maxDistance})
+}
+ORDER BY ASC(?distance)
+LIMIT 5
+  `;
+  // Query for standard GeoSPARQL
+  /*return `
+PREFIX osmt: <https://wiki.openstreetmap.org/wiki/Key:>
 PREFIX osmm: <https://www.openstreetmap.org/meta/>
 PREFIX geof: <http://www.opengis.net/def/geosparql/function/>
 
@@ -396,8 +431,9 @@ SELECT ?osmid ?name ?website ?distance WHERE {
   BIND(geof:distance(?geom, "POINT(${long} ${lat})"^^geo:wktLiteral) AS ?distance)
   FILTER(?distance < ${maxDistance})
 }
+ORDER BY ASC(?distance)
 LIMIT 5
-`;
+`;*/
 };
 
 /**
