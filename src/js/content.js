@@ -21,6 +21,20 @@ document.onreadystatechange = async () => {
     } else {
       onEventPage();
     }
+
+    /*const eventList = document.querySelectorAll('div.app-offers-list');
+    const observer = new MutationObserver((mutationsList, observer) => {
+      for (const mutation of mutationsList) {
+        if (mutation.type === 'childList') {
+          console.log("HEEEEEEEEEEEREEEEE")
+          onSearchPage();
+        }
+      }
+    });
+    eventList.forEach(div => {
+      observer.observe(div, { childList: true });
+    });
+    console.log(eventList);*/
   }
 };
 
@@ -177,7 +191,7 @@ async function addMuseumRow(options) {
       ...options
     });
 
-    if (museums) {
+    if (museums && museums.length > 0) {
       museums.sort((a, b) => {
         return parseFloat(a.distance.value) - parseFloat(b.distance.value);
       });
@@ -187,7 +201,11 @@ async function addMuseumRow(options) {
 
       const museumsHTML = `<div class="icons app-icon app-icon-redesign-age">🏛️</div><div data-v-f777bbd1>${museums.join(', ')}</div>`;
       addRowToInfoHeader({ html: museumsHTML });
+    } else {
+      const museumsHTML = `<div class="icons app-icon app-icon-redesign-age">🏛️</div><div data-v-f777bbd1>No museums found</div>`;
+      addRowToInfoHeader({ html: museumsHTML });
     }
+  
   } catch (err) {
     console.error('An issue was encountered when executing a SPARQL for museums');
     console.error(err);
