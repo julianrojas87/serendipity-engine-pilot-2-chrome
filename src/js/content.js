@@ -21,22 +21,11 @@ document.onreadystatechange = async () => {
     } else {
       onEventPage();
     }
-
-    /*const eventList = document.querySelectorAll('div.app-offers-list');
-    const observer = new MutationObserver((mutationsList, observer) => {
-      for (const mutation of mutationsList) {
-        if (mutation.type === 'childList') {
-          console.log("HEEEEEEEEEEEREEEEE")
-          onSearchPage();
-        }
-      }
-    });
-    eventList.forEach(div => {
-      observer.observe(div, { childList: true });
-    });
-    console.log(eventList);*/
   }
 };
+
+// Handle the case where the user navigates to another page.
+document.onchange = async () => delayedSearchPage();
 
 /**
  * This function adds the extra info to the page of the event.
@@ -62,23 +51,50 @@ function onSearchPage() {
   const links = document.querySelectorAll('a.app-event-teaser-link');
 
   links.forEach(node => {
-    node.addEventListener('click', () => {
-      console.log(node);
-
-      const url = new URL(node.href);
-      const urlParts = url.pathname.split('/');
-      addExtraInfoToPage(urlParts[urlParts.length - 1]);
-    });
+    const eventAttached = node.getAttribute(`data-onclick-attached`);
+    if (!eventAttached) {
+      node.setAttribute(`data-onclick-attached`, 'true');
+      node.addEventListener('click', () => {
+        const url = new URL(node.href);
+        const urlParts = url.pathname.split('/');
+        addExtraInfoToPage(urlParts[urlParts.length - 1]);
+      });
+    }
   });
 
-  const paginationItems = document.querySelectorAll('.v-pagination__list > li');
+  const observer = new MutationObserver((mutationsList, observer) => {
+    for (const mutation of mutationsList) {
+      if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+        const addedNode = mutation.addedNodes[0];
+        if (addedNode.className === 'app-pagination') {
+          // Add click listeners to the pagination items when they are ready.
+          const paginationItems = document.querySelectorAll('.v-pagination__list > li');
+          paginationItems.forEach(node => {
+            const eventAttached = node.getAttribute(`data-onclick-attached`);
+            if (!eventAttached) {
+              node.setAttribute(`data-onclick-attached`, 'true');
+              node.addEventListener('click', () => {
+                console.log("PAGINATION CLICKED");
+                delayedSearchPage();
+              });
+            }
+          });
+        }
+      }
+    }
+  });
 
-  paginationItems.forEach(node => {
-    node.addEventListener('click', () => {
-      console.log(node);
+  // Observe mutations to the footer to know when the pagination is ready.
+  const footer = document.querySelector('.app-offers-list__footer');
+  observer.observe(footer, { childList: true });
+}
+
+function delayedSearchPage() {
+  setTimeout(() => {
+    if (isSearchPage()) {
       onSearchPage();
-    });
-  });
+    }
+  }, 1000);
 }
 
 /**
@@ -120,9 +136,17 @@ async function addStationRow(options) {
   try {
     console.log('Fetching stations.');
     const bindingsStream = await getClosestTrainStations(options.bbox);
-
-    let alreadyOneStation = false;
     const stations = [];
+
+    // Prepare the div for the stations.
+    const infoDiv = document.querySelector('.app-event-details__content__header__info');
+    const newDiv = document.createElement('div');
+    newDiv.classList.add('app-event-details__content__header__info__ages');
+    newDiv.classList.add('app-event-details__list-item-with-icon');
+    newDiv.innerHTML = '<div class="icons app-icon app-icon-redesign-age">🚂</div><div data-v-f777bbd1 id="stations"></div>';
+    infoDiv?.appendChild(newDiv);
+    const stationsDiv = document.querySelector('#stations');
+    stationsDiv.innerHTML = 'trainstations zoeken...';
 
     bindingsStream.on('data', (binding) => {
       const distance = turf.distance(
@@ -136,36 +160,31 @@ async function addStationRow(options) {
         name: binding.get('name').value,
         distance
       });
-    });
-
-    bindingsStream.on('end', () => {
-      console.log('Received stations.');
-
+      // Sort the stations by distance.
       stations.sort((a, b) => {
         return parseFloat(a.distance) - parseFloat(b.distance);
       });
 
-      for (const station of stations) {
-        if (!alreadyOneStation) {
-          const infoDiv = document.querySelector('.app-event-details__content__header__info');
-          //console.log(infoDiv);
-          const newDiv = document.createElement('div');
-          newDiv.classList.add('app-event-details__content__header__info__ages');
-          newDiv.classList.add('app-event-details__list-item-with-icon');
-          newDiv.innerHTML = '<div class="icons app-icon app-icon-redesign-age">🚂</div><div data-v-f777bbd1 id="stations"></div>';
-          infoDiv?.appendChild(newDiv);
-        }
+      stationsDiv.innerHTML = '';
 
-        const stationsDiv = document.querySelector('#stations');
+      if (stations.length > 0) {
+        for (const [i, station] of stations.entries()) {
+          if (stationsDiv) {
+            if (i > 0) {
+              stationsDiv.innerHTML += ', ';
+            }
 
-        if (stationsDiv) {
-          if (alreadyOneStation) {
-            stationsDiv.innerHTML += ', ';
+            stationsDiv.innerHTML += `<a href="${station.station}">${station.name} (${Math.round((station.distance + Number.EPSILON) * 100) / 100} km)</a>`;
           }
-
-          stationsDiv.innerHTML += `<a href="${station.station}">${station.name} (${Math.round((station.distance + Number.EPSILON) * 100) / 100} km)</a>`;
-          alreadyOneStation = true;
         }
+      }
+    });
+
+    bindingsStream.on('end', () => {
+      console.log('Received all stations.');
+
+      if (stations.length === 0) {
+        stationsDiv.innerHTML = 'Geen stations gevonden';
       }
     });
   } catch (err) {
@@ -181,11 +200,6 @@ async function addStationRow(options) {
 async function addMuseumRow(options) {
   try {
     console.log('Fetching museums.');
-    // let museums = await queryWorldKG({
-    //   type: 'Museum',
-    //   ...options.bbox
-    // });
-
     let museums = await querySophox({
       type: 'museum',
       ...options
@@ -202,10 +216,10 @@ async function addMuseumRow(options) {
       const museumsHTML = `<div class="icons app-icon app-icon-redesign-age">🏛️</div><div data-v-f777bbd1>${museums.join(', ')}</div>`;
       addRowToInfoHeader({ html: museumsHTML });
     } else {
-      const museumsHTML = `<div class="icons app-icon app-icon-redesign-age">🏛️</div><div data-v-f777bbd1>No museums found</div>`;
+      const museumsHTML = `<div class="icons app-icon app-icon-redesign-age">🏛️</div><div data-v-f777bbd1>Geen musea gevonden</div>`;
       addRowToInfoHeader({ html: museumsHTML });
     }
-  
+
   } catch (err) {
     console.error('An issue was encountered when executing a SPARQL for museums');
     console.error(err);
@@ -336,55 +350,6 @@ WHERE {
 };
 
 /**
- * This function queries the WorldKG for a given bounding box and returns the results.
- * @param {object} options - An object with the type and the properties of a bounding box.
- * @returns {Array} - The bindings of the results.
- */
-// eslint-disable-next-line no-unused-vars
-async function queryWorldKG(options) {
-  const worldkgQuery = worldKgQueryTemplate(options);
-  //console.log(worldkgQuery);
-
-  // myEngine = new Comunica.QueryEngine();
-  // bindingsStream = await myEngine.queryBindings(worldkgQuery, {
-  //   sources: ['https://www.worldkg.org/sparql'],
-  // });
-  // bindings = await bindingsStream.toArray();
-  // console.log(bindings.map(binding => `${binding.get('name').value} at ${binding.get('p').value}`));
-
-  // There is an issue with the SPARQL endpoint, so we can't use Comunica.
-  // That's why we use a fetch with the query as a query parameter.
-  // This could be resolved by creating our own Comunica engine,
-  // but the SPARQL endpoint is probably not spec compliant.
-  const worldKgUrl = 'https://www.worldkg.org/sparql?' + new URLSearchParams({
-    query: worldkgQuery,
-    format: 'application/sparql-results+json'
-  });
-  const proxyUrl = CORS_PROXY + encodeURIComponent(worldKgUrl);
-  const response = await fetch(proxyUrl,);
-
-  if (response.ok) {
-    const result = await response.json();
-    console.log('WorldKG results: ', result);
-    return result.results.bindings;
-  }
-}
-
-const worldKgQueryTemplate = ({ type, longMin, longMax, latMin, latMax }) => {
-  return `
-PREFIX wkgs: <http://www.worldkg.org/schema/>
-PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-PREFIX geo: <http://www.opengis.net/ont/geosparql#>
-
-SELECT  ?p ?name
-WHERE {
- ?p a wkgs:${type}; rdfs:label ?name .
- ?p wkgs:spatialObject [geo:asWKT ?fWKT] .
- FILTER ( bif:st_Within ( ?fWKT ,"POLYGON((${longMin} ${latMin}, ${longMin} ${latMax}, ${longMax} ${latMin}, ${longMax} ${latMax}))"^^geo:wktLiteral ) )
-}`;
-};
-
-/**
  * This function queries the Sophox KG based on a given maximum distance and returns the results.
  * @param {object} options - An object with the type, location and maximum distance.
  * @returns {Array} - The bindings of the results.
@@ -470,6 +435,7 @@ function isValidEventID(str) {
 function isSearchPage() {
   return document.querySelector('.app-results-search-facet-group') !== null;
 }
+
 /**
  * This function returns a RDF-JS Store object containing the NMBS station quads.
  * @returns {Store} - RDF-JS Store instance.
