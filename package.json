@@ -1,6 +1,6 @@
 {
   "name": "pilot-2-chrome-extension",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "scripts": {
     "start": "rm -rf dist; webpack --watch --config webpack.dev.config.js",
     "build": "webpack",
